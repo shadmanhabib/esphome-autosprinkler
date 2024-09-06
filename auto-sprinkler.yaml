@@ -1,0 +1,97 @@
+esphome:
+  name: auto-sprinkler
+
+# For running on desktop computer
+host:
+
+# Enable Home Assistant API
+api:
+
+# Enable logging
+logger:
+
+time:
+  - platform: homeassistant
+    id: hass_time
+
+datetime:
+  - platform: template
+    type: time
+    name: "Auto Watering Time"
+    id: automation_time
+    optimistic: yes
+    initial_value: "07:00:00"
+    restore_value: true
+  - platform: template
+    type: datetime
+    name: "Last Watering Time"
+    id: last_watering
+    optimistic: yes
+    initial_value: "2024-09-01 07:30:00"
+    restore_value: true
+
+sensor:
+  - platform: homeassistant
+    name: "Last Rain"
+    id: last_rain
+    device_class: timestamp
+    entity_id: sensor.last_rain
+
+number:
+  - platform: template
+    name: "Watering Frequency"
+    id: frequency
+    optimistic: true
+    min_value: 0
+    max_value: 7
+    step: 1
+    restore_value: true
+
+interval:
+  - interval: 1min
+    then:
+      - lambda: |-
+          // Automation variables
+          char run_states = 0b000;
+          int freq = id(frequency).state;
+          ESPTime now = id(hass_time).now();
+          ESPTime autorun = id(automation_time).state_as_esptime();
+          ESPTime last_run = id(last_watering).state_as_esptime();
+
+          // Track sprinkler on time
+          if (id(lawn_sprinkler_ctrlr).active_valve().has_value()) {
+            auto call = id(last_watering).make_call();
+            call.set_date(now.strftime("%Y-%m-%d %H:%M:%S"));
+            call.perform();
+          }
+
+          // Check if the current time matches the automation time
+          if (now.hour == autorun.hour && now.minute == autorun.minute) {
+            ESP_LOGD("autosprinker", "Sprinkler automation time matched at %s! Checking run conditions.", now.strftime("%H:%M").c_str());
+
+            // Check when the last rain event occurred. Error checking as Home Assistant will initially set helper to NaN.
+            ESPTime rain = esphome::ESPTime::from_epoch_local(0);
+            if(!isnan(id(last_rain).state)) {
+             rain = esphome::ESPTime::from_epoch_local(id(last_rain).state);
+            }
+
+            // Update run_states
+            if ((now.timestamp - rain.timestamp) >= (48 * 3600)) run_states |= 0b001;
+            if (freq > 0) run_states |= 0b010;
+            if ((now.timestamp - last_run.timestamp) >= (168 * 3600 / freq)) run_states |= 0b100;
+            
+            // Confirm automatic sprinkler run
+            if (run_states == 0b111) {
+              ESP_LOGD("autosprinkler", "Running sprinklers! All conditions satisfied.");
+            } else if (~run_states & 0b001) {
+              ESP_LOGD("autosprinkler", "Skipping automatic watering. Rain was reported on %s.", rain.strftime("%d-%m-%y at %I:%M %p").c_str());
+            } else if (~run_states & 0b010) {
+              ESP_LOGD("autosprinkler", "Skipping automatic watering. Disabled with frequency set to 0.");
+            } else if (~run_states & 0b100) {
+              ESP_LOGD("autosprinkler", "Skipping automatic watering. Sprinkler run previously on %s.", last_run.strftime("%d-%m-%y at %I:%M %p").c_str());
+            } else {
+              ESP_LOGD("autosprinkler", "An unknown condition prevented automatic watering.");
+            }
+          } else {
+            ESP_LOGD("autosprinker", "Automation time not matched.");
+          }
