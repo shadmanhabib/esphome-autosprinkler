@@ -71,6 +71,29 @@ sensor:
       } else {
         return NAN;  // Return NaN if no value is available
       }
+  - platform: template
+    name: "Next Watering"
+    id: next_watering_sensor
+    device_class: timestamp
+    lambda: |-
+      int freq = id(frequency).state;  // Frequency in days
+      if (freq == 0) {
+        return NAN;  // No watering scheduled
+      }
+
+      // Calculate the next possible watering time
+      time_t next_by_freq = id(last_watering) + (freq * 86400);  // Frequency-based watering time
+      time_t next_rain_delay = id(last_rain) + (48 * 3600);      // 48-hour rain delay
+
+      // Determine the later of the two
+      time_t next_watering = max(next_by_freq, next_rain_delay);
+
+      // Ensure it's in the future
+      if (next_watering > id(hass_time).now().timestamp) {
+        return (float) next_watering;
+      } else {
+        return NAN;  // Invalid if in the past
+      }
 
 text_sensor:
   - platform: homeassistant
