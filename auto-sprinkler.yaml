@@ -76,14 +76,14 @@ sensor:
     id: next_watering_sensor
     device_class: timestamp
     lambda: |-
-      int freq = id(frequency).state;  // Frequency in days
+      int freq = id(frequency).state;
       if (freq == 0) {
         return NAN;  // No watering scheduled
       }
 
       // Calculate the next possible watering time
-      time_t next_by_freq = id(last_watering) + (freq * 86400);  // Frequency-based watering time
-      time_t next_rain_delay = id(last_rain) + (48 * 3600);      // 48-hour rain delay
+      time_t next_by_freq = id(last_watering) + (freq * 86400);
+      time_t next_rain_delay = id(last_rain) + (48 * 3600);
 
       // Determine the later of the two
       time_t next_watering = max(next_by_freq, next_rain_delay);
@@ -92,7 +92,7 @@ sensor:
       if (next_watering > id(hass_time).now().timestamp) {
         return (float) next_watering;
       } else {
-        return NAN;  // Invalid if in the past
+        return NAN;
       }
 
 text_sensor:
@@ -127,7 +127,6 @@ interval:
     then:
       - lambda: |-
           // Automation variables
-          char run_states = 0b100;
           int freq = id(frequency).state;
           ESPTime autorun = id(automation_time).state_as_esptime();
           ESPTime rain = esphome::ESPTime::from_epoch_local(id(last_rain));
@@ -137,26 +136,20 @@ interval:
           if (id(hass_time).now().hour == autorun.hour && id(hass_time).now().minute == autorun.minute) {
             ESP_LOGD("autosprinker", "Sprinkler automation time matched at %s! Checking run conditions.", id(hass_time).now().strftime("%H:%M").c_str());
             
-            // Update run_states
-            if (freq > 0) {
-              run_states |= 0b001;
-            }
-            if ((id(hass_time).now().timestamp - rain.timestamp) >= (48 * 3600)) {
-              run_states |= 0b010;
-            }
-            if ((id(hass_time).now().timestamp - last_run.timestamp) >= (168 * 3600 / freq)) {
-              run_states |= 0b100;
-            }
+            // Check run conditions
+            bool frequency_ok = (freq > 0);
+            bool rain_ok = ((id(hass_time).now().timestamp - rain.timestamp) >= (48 * 3600));
+            bool last_run_ok = ((id(hass_time).now().timestamp - last_run.timestamp) >= (168 * 3600 / freq));
 
             // Confirm automatic sprinkler run
-            if (run_states == 0b111) {
+            if (frequency_ok && rain_ok && last_run_ok) {
               ESP_LOGD("autosprinkler", "Running sprinklers! All conditions satisfied.");
               id(lawn_sprinkler_ctrlr).resume_or_start_full_cycle();
-            } else if (~run_states & 0b001) {
+            } else if (!frequency_ok) {
               ESP_LOGD("autosprinkler", "Skipping automatic watering. Disabled with frequency set to 0.");
-            } else if (~run_states & 0b010) {
+            } else if (!rain_ok) {
               ESP_LOGD("autosprinkler", "Skipping automatic watering. Rain was reported on %s.", rain.strftime("%d-%m-%y at %I:%M %p").c_str());
-            } else if (~run_states & 0b100) {
+            } else if (!last_run_ok) {
               ESP_LOGD("autosprinkler", "Skipping automatic watering. Sprinkler run previously on %s.", last_run.strftime("%d-%m-%y at %I:%M %p").c_str());
             } else {
               ESP_LOGD("autosprinkler", "An unknown condition prevented automatic watering.");
